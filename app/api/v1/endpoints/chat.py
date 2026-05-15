@@ -11,12 +11,6 @@ def chat(
     req: ChatRequest,
     bot: HearthyBot = Depends(get_chatbot),
 ) -> ChatResponse:
-    """
-    Chat dengan HearthyBot — asisten virtual edukasi kesehatan jantung.
-
-    Kirim history percakapan sebelumnya agar konteks terjaga.
-    History dikelola di sisi client (stateless API).
-    """
     try:
         return bot.chat(req)
     except Exception as e:

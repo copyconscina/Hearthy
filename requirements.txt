@@ -1,0 +1,18 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
+python-dotenv>=1.0.0
+
+# ML
+tensorflow>=2.16.0
+scikit-learn>=1.4.0
+numpy>=1.26.0
+pandas>=2.2.0
+joblib>=1.4.0
+
+# Chatbot
+google-genai>=0.8.0
+
+# PDF processing (untuk scripts/load_knowledge.py)
+pymupdf>=1.24.0

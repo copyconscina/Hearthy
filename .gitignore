@@ -1,0 +1,3 @@
+.env
+app/data/*.keras
+app/data/*.pkl

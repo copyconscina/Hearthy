@@ -10,6 +10,35 @@ from tensorflow.keras import layers
 from app.schemas.prediction import PredictionRequest, PredictionResponse
 from app.services.recommender import generate_recommendations, generate_risk_comparison
 
+@tf.keras.utils.register_keras_serializable()
+class MinorityAwareLoss(tf.keras.losses.Loss):
+    def __init__(self, gamma=2.0, class_weights=None,
+                 name='minority_aware_loss', **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.gamma = gamma
+        if class_weights is None:
+            self.class_weights = tf.constant([1.293, 0.998, 0.817], dtype=tf.float32)
+        else:
+            self.class_weights = tf.constant(class_weights, dtype=tf.float32)
+
+    def call(self, y_true, y_pred):
+        y_pred = tf.clip_by_value(y_pred, 1e-7, 1.0 - 1e-7)
+        n_classes = tf.shape(y_pred)[-1]
+        y_true_oh = tf.one_hot(tf.cast(y_true, tf.int32), n_classes)
+        y_true_oh = tf.cast(y_true_oh, tf.float32)
+        p_t = tf.reduce_sum(y_true_oh * y_pred, axis=-1)
+        ce = -tf.math.log(p_t)
+        focal_w = tf.pow(1.0 - p_t, self.gamma)
+        sample_weights = tf.reduce_sum(y_true_oh * self.class_weights, axis=-1)
+        return sample_weights * focal_w * ce
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'gamma': self.gamma,
+            'class_weights': self.class_weights.numpy().tolist(),
+        })
+        return config
 
 # ── Custom Layer (harus didefinisikan ulang untuk load model) ────────────────
 
@@ -130,9 +159,12 @@ def _derive_features(req: PredictionRequest) -> dict:
 class HearthyPredictor:
     def __init__(self, model_path: str, scaler_path: str, label_encoder_path: str):
         self.model = tf.keras.models.load_model(
-            model_path,
-            custom_objects={"FeatureAttentionBlock": FeatureAttentionBlock},
-        )
+    model_path,
+    custom_objects={
+        "FeatureAttentionBlock": FeatureAttentionBlock,
+        "MinorityAwareLoss": MinorityAwareLoss,
+    },
+)
         self.scaler = joblib.load(scaler_path)
         self.label_encoder = joblib.load(label_encoder_path)
 

@@ -3,7 +3,8 @@ HearthyBot: wrapper Gemini API dengan knowledge base dari jurnal medis.
 Knowledge base di-load sekali saat inisialisasi.
 """
 import json
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from app.schemas.chat import ChatRequest, ChatResponse, ChatMessage
 
@@ -50,27 +51,27 @@ def _load_knowledge_base(path: str) -> str:
 
 class HearthyBot:
     def __init__(self, api_key: str, model_name: str, knowledge_base_path: str):
-        genai.configure(api_key=api_key)
+        self._client = genai.Client(api_key=api_key)
+        self._model_name = model_name
 
         knowledge_base = _load_knowledge_base(knowledge_base_path)
-        system_prompt = SYSTEM_PROMPT_TEMPLATE.format(knowledge_base=knowledge_base)
-
-        self._model = genai.GenerativeModel(
-            model_name=model_name,
-            system_instruction=system_prompt,
-        )
+        self._system_prompt = SYSTEM_PROMPT_TEMPLATE.format(knowledge_base=knowledge_base)
 
     def chat(self, req: ChatRequest) -> ChatResponse:
         """
         Kirim pesan dengan history percakapan.
-        History dikelola di sisi client/frontend dan dikirim tiap request
-        (Gemini API stateless — tidak ada session server-side).
+        History dikelola di sisi client/frontend dan dikirim tiap request.
         """
         history = [
-            {"role": msg.role, "parts": [msg.content]}
+            types.Content(role=msg.role, parts=[types.Part(text=msg.content)])
             for msg in (req.history or [])
         ]
 
-        session = self._model.start_chat(history=history)
-        response = session.send_message(req.message)
+        response = self._client.models.generate_content(
+            model=self._model_name,
+            contents=history + [types.Content(role="user", parts=[types.Part(text=req.message)])],
+            config=types.GenerateContentConfig(
+                system_instruction=self._system_prompt,
+            ),
+        )
         return ChatResponse(reply=response.text)
