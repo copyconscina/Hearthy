@@ -40,7 +40,6 @@ class MinorityAwareLoss(tf.keras.losses.Loss):
         })
         return config
 
-# ── Custom Layer (harus didefinisikan ulang untuk load model) ────────────────
 
 class FeatureAttentionBlock(tf.keras.layers.Layer):
     def __init__(self, units, reduction_ratio=4, dropout_rate=0.2, **kwargs):
@@ -78,80 +77,139 @@ class FeatureAttentionBlock(tf.keras.layers.Layer):
         return config
 
 
-# ── Urutan fitur sesuai saat training ───────────────────────────────────────
-# Sesuaikan dengan df.drop(columns=drop_cols).columns dari notebook
 FEATURE_ORDER = [
-    "age", "gender", "systolic_bp", "diastolic_bp", "cholesterol_mg_dl",
-    "bmi", "bmi_category", "resting_heart_rate", "daily_steps",
-    "physical_activity_hours_per_week", "activity_level", "sleep_hours",
-    "alcohol_units_per_week", "stress_level", "diet_quality_score",
-    "smoking_status", "diabetes", "hypertension",
-    "family_history_heart_disease",
-    "bp_category", "pulse_pressure", "cardiovascular_age",
-    # tambahkan fitur turunan lain sesuai dataset asli
+    "age", "bmi", "systolic_bp", "diastolic_bp", "cholesterol_mg_dl",
+    "resting_heart_rate", "smoking_status", "daily_steps", "stress_level",
+    "physical_activity_hours_per_week", "sleep_hours", "family_history_heart_disease",
+    "diet_quality_score", "alcohol_units_per_week", "age_group", "pulse_pressure",
+    "blood_pressure_ratio", "hypertension_stage", "bmi_category", "cholesterol_category",
+    "activity_level", "sleep_category", "alcohol_category", "lifestyle_risk_score",
+    "clinical_risk_score",
 ]
 
 SCORE_MAX = 100.0
 
 
 def _derive_features(req: PredictionRequest) -> dict:
-    """Hitung fitur turunan yang tidak dikirim dari frontend."""
     data = req.model_dump()
 
-    # BMI category: 0=underweight, 1=normal, 2=overweight, 3=obese
-    bmi = data["bmi"]
-    if data.get("bmi_category") is None:
-        if bmi < 18.5:
-            data["bmi_category"] = 0
-        elif bmi < 25:
-            data["bmi_category"] = 1
-        elif bmi < 30:
-            data["bmi_category"] = 2
-        else:
-            data["bmi_category"] = 3
+    age    = data["age"]
+    sys_bp = data["systolic_bp"]
+    dia_bp = data["diastolic_bp"]
+    chol   = data["cholesterol_mg_dl"]
+    sleep  = data["sleep_hours"]
+    alcohol = data["alcohol_units_per_week"]
+    act    = data["physical_activity_hours_per_week"]
+    bmi    = data["bmi"]
 
-    # Activity level berdasarkan hours/week
-    act = data["physical_activity_hours_per_week"]
-    if data.get("activity_level") is None:
-        if act * 60 < 75:
-            data["activity_level"] = 0
-        elif act * 60 < 150:
-            data["activity_level"] = 1
-        else:
-            data["activity_level"] = 2
+    # age_group
+    if age < 30:
+        data["age_group"] = 6
+    elif age < 40:
+        data["age_group"] = 0
+    elif age < 50:
+        data["age_group"] = 1
+    elif age < 60:
+        data["age_group"] = 2
+    elif age < 70:
+        data["age_group"] = 3
+    elif age < 80:
+        data["age_group"] = 4
+    else:
+        data["age_group"] = 5
 
-    # BP category
-    sys = data["systolic_bp"]
-    dia = data["diastolic_bp"]
-    if data.get("bp_category") is None:
-        if sys < 120 and dia < 80:
-            data["bp_category"] = 0
-        elif sys < 130 and dia < 80:
-            data["bp_category"] = 1
-        elif sys < 140 or dia < 90:
-            data["bp_category"] = 2
-        else:
-            data["bp_category"] = 3
+    # blood_pressure_ratio
+    data["blood_pressure_ratio"] = round(sys_bp / dia_bp, 6) if dia_bp else 0
 
-    # Pulse pressure
-    if data.get("pulse_pressure") is None:
-        data["pulse_pressure"] = sys - dia
+    # hypertension_stage
+    if sys_bp < 120 and dia_bp < 80:
+        data["hypertension_stage"] = 0
+    elif sys_bp < 130 and dia_bp < 80:
+        data["hypertension_stage"] = 1
+    elif sys_bp < 140 or dia_bp < 90:
+        data["hypertension_stage"] = 2
+    else:
+        data["hypertension_stage"] = 3
 
-    # Cardiovascular age (simplified estimate)
-    if data.get("cardiovascular_age") is None:
-        cv_age = data["age"]
-        if data["smoking_status"] == 1:
-            cv_age += 5
-        if data["hypertension"] == 1:
-            cv_age += 3
-        if data["diabetes"] == 1:
-            cv_age += 4
-        if data.get("family_history_heart_disease"):
-            cv_age += 2
-        data["cardiovascular_age"] = cv_age
+    # cholesterol_category
+    if chol < 200:
+        data["cholesterol_category"] = 0
+    elif chol < 240:
+        data["cholesterol_category"] = 1
+    else:
+        data["cholesterol_category"] = 2
+
+    # bmi_category
+    if bmi < 18.5:
+        data["bmi_category"] = 0
+    elif bmi < 25:
+        data["bmi_category"] = 1
+    elif bmi < 30:
+        data["bmi_category"] = 2
+    else:
+        data["bmi_category"] = 3
+
+    # sleep_category
+    if sleep < 6:
+        data["sleep_category"] = 0
+    elif sleep <= 9:
+        data["sleep_category"] = 1
+    else:
+        data["sleep_category"] = 2
+
+    # alcohol_category
+    if alcohol <= 0:
+        data["alcohol_category"] = 0
+    elif alcohol <= 7:
+        data["alcohol_category"] = 1
+    else:
+        data["alcohol_category"] = 2
+
+    # activity_level
+    if act * 60 < 75:
+        data["activity_level"] = 0
+    elif act * 60 < 150:
+        data["activity_level"] = 1
+    else:
+        data["activity_level"] = 2
+
+    # pulse_pressure
+    data["pulse_pressure"] = sys_bp - dia_bp
+
+    # lifestyle_risk_score
+    lifestyle = 0
+    if data.get("smoking_status", 0) >= 1:
+        lifestyle += 1
+    if data["activity_level"] == 0:
+        lifestyle += 1
+    if data["sleep_category"] == 0:
+        lifestyle += 1
+    if data["alcohol_category"] == 2:
+        lifestyle += 1
+    if data["bmi_category"] >= 3:
+        lifestyle += 1
+    if data.get("stress_level", 0) >= 7:
+        lifestyle += 1
+    if data.get("diet_quality_score", 10) <= 3:
+        lifestyle += 1
+    data["lifestyle_risk_score"] = lifestyle
+
+    # clinical_risk_score
+    clinical = 0
+    if data["hypertension_stage"] >= 2:
+        clinical += 1
+    if data["cholesterol_category"] >= 2:
+        clinical += 1
+    if data.get("diabetes", 0) == 1:
+        clinical += 1
+    if int(data.get("family_history_heart_disease", 0)):
+        clinical += 1
+    if age >= 45:
+        clinical += 1
+    data["clinical_risk_score"] = clinical
 
     # Convert bool to int
-    data["family_history_heart_disease"] = int(data["family_history_heart_disease"])
+    data["family_history_heart_disease"] = int(data.get("family_history_heart_disease", 0))
 
     return data
 
@@ -159,23 +217,21 @@ def _derive_features(req: PredictionRequest) -> dict:
 class HearthyPredictor:
     def __init__(self, model_path: str, scaler_path: str, label_encoder_path: str):
         self.model = tf.keras.models.load_model(
-    model_path,
-    custom_objects={
-        "FeatureAttentionBlock": FeatureAttentionBlock,
-        "MinorityAwareLoss": MinorityAwareLoss,
-    },
-)
+            model_path,
+            custom_objects={
+                "FeatureAttentionBlock": FeatureAttentionBlock,
+                "MinorityAwareLoss": MinorityAwareLoss,
+            },
+        )
         self.scaler = joblib.load(scaler_path)
         self.label_encoder = joblib.load(label_encoder_path)
 
     def predict(self, req: PredictionRequest) -> PredictionResponse:
         data = _derive_features(req)
 
-        # Build feature vector sesuai urutan training
         x = np.array([[data.get(f, 0) for f in FEATURE_ORDER]], dtype=np.float32)
         x_scaled = self.scaler.transform(x)
 
-        # Inferensi — model punya 2 output: class + score
         outputs = self.model.predict(x_scaled, verbose=0)
 
         if isinstance(outputs, list):
@@ -186,15 +242,13 @@ class HearthyPredictor:
 
         class_idx = int(np.argmax(class_probs, axis=-1)[0])
         confidence = float(class_probs[0][class_idx])
-        risk_category = self.label_encoder.inverse_transform([class_idx])[0]
+        risk_category = str(self.label_encoder.inverse_transform([class_idx])[0])
 
         if score_norm is not None:
             risk_score = float(score_norm[0][0]) * SCORE_MAX
         else:
-            # Fallback: skor berdasarkan probabilitas kelas
             risk_score = float(class_idx / (len(self.label_encoder.classes_) - 1)) * 100
 
-        # Rekomendasi
         user_input_dict = {
             "systolic_bp": data["systolic_bp"],
             "diastolic_bp": data["diastolic_bp"],
