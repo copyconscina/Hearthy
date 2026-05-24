@@ -1,10 +1,7 @@
-"""
-Dependency injection: model TF dan HearthyBot di-load sekali saat startup,
-lalu di-inject ke endpoint via FastAPI Depends().
-"""
 from functools import lru_cache
 from app.services.predictor import HearthyPredictor
 from app.services.chatbot import HearthyBot
+from app.services.peer_analyzer import PeersAnalyzer
 from app.core.config import get_settings
 
 
@@ -26,3 +23,9 @@ def get_chatbot() -> HearthyBot:
         model_name=settings.gemini_model,
         knowledge_base_path=settings.knowledge_base_path,
     )
+
+
+@lru_cache
+def get_peers_analyzer() -> PeersAnalyzer:
+    settings = get_settings()
+    return PeersAnalyzer(dataset_path=settings.dataset_path)

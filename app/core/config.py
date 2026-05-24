@@ -7,13 +7,14 @@ class Settings(BaseSettings):
 
     # Gemini
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.1-flash-lite-preview"
+    gemini_model: str = "gemini-2.0-flash-lite"
 
     # Paths
-    model_path: str = "app/data/hearthy_model.keras"
-    scaler_path: str = "app/data/scaler.pkl"
-    label_encoder_path: str = "app/data/label_encoder.pkl"
+    model_path: str = "app/data/best_attention_model.keras"
+    scaler_path: str = "app/data/scaler_attn.pkl"
+    label_encoder_path: str = "app/data/label_encoder_attn.pkl"
     knowledge_base_path: str = "app/data/knowledge_base.json"
+    dataset_path: str = "app/data/cardiovascular_risk_dataset_feature_engineered.csv"
 
     # Server
     app_env: str = "development"
