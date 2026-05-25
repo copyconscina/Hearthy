@@ -1,7 +1,7 @@
 """
 HearthyPredictor: load model TensorFlow sekali, inferensi per request.
-Custom objects (FeatureAttentionBlock, MinorityAwareLoss) didefinisikan ulang
-agar model bisa di-load tanpa error.
+Setelah prediksi, hasil langsung dikirim ke GeminiRecommender untuk
+menghasilkan rekomendasi aktivitas personal.
 """
 import numpy as np
 import joblib
@@ -9,7 +9,7 @@ import tensorflow as tf
 from tensorflow.keras import layers
 
 from app.schemas.prediction import PredictionRequest, PredictionResponse
-from app.services.recommender import generate_recommendations, generate_risk_comparison
+from app.services.gemini_recommender import GeminiRecommender
 
 
 # ── Custom Loss ──────────────────────────────────────────────────────────────
@@ -119,7 +119,6 @@ def _derive_features(req: PredictionRequest) -> dict:
     act   = data["physical_activity_hours_per_week"]
     bmi   = data["bmi"]
 
-    # age_group
     if age < 30:   data["age_group"] = 6
     elif age < 40: data["age_group"] = 0
     elif age < 50: data["age_group"] = 1
@@ -128,73 +127,68 @@ def _derive_features(req: PredictionRequest) -> dict:
     elif age < 80: data["age_group"] = 4
     else:          data["age_group"] = 5
 
-    # blood_pressure_ratio
     data["blood_pressure_ratio"] = round(sys / dia, 6) if dia else 0
 
-    # hypertension_stage
     if sys < 120 and dia < 80:   data["hypertension_stage"] = 0
     elif sys < 130 and dia < 80: data["hypertension_stage"] = 1
     elif sys < 140 or dia < 90:  data["hypertension_stage"] = 2
     else:                        data["hypertension_stage"] = 3
 
-    # bmi_category
     if bmi < 18.5:  data["bmi_category"] = 0
     elif bmi < 25:  data["bmi_category"] = 1
     elif bmi < 30:  data["bmi_category"] = 2
     else:           data["bmi_category"] = 3
 
-    # cholesterol_category
-    if chol < 200:  data["cholesterol_category"] = 0
+    if chol < 200:   data["cholesterol_category"] = 0
     elif chol < 240: data["cholesterol_category"] = 1
-    else:           data["cholesterol_category"] = 2
+    else:            data["cholesterol_category"] = 2
 
-    # activity_level
     act_min = act * 60
-    if act_min < 75:   data["activity_level"] = 0
+    if act_min < 75:    data["activity_level"] = 0
     elif act_min < 150: data["activity_level"] = 1
-    else:              data["activity_level"] = 2
+    else:               data["activity_level"] = 2
 
-    # sleep_category
     if sleep < 6:    data["sleep_category"] = 0
     elif sleep <= 9: data["sleep_category"] = 1
     else:            data["sleep_category"] = 2
 
-    # alcohol_category
-    if alc <= 0:    data["alcohol_category"] = 0
-    elif alc <= 7:  data["alcohol_category"] = 1
-    else:           data["alcohol_category"] = 2
+    if alc <= 0:   data["alcohol_category"] = 0
+    elif alc <= 7: data["alcohol_category"] = 1
+    else:          data["alcohol_category"] = 2
 
-    # pulse_pressure
     data["pulse_pressure"] = sys - dia
 
-    # lifestyle_risk_score
     ls = 0
-    if data["smoking_status"] == 2:          ls += 1  # Current smoker
-    if data["activity_level"] == 0:          ls += 1
-    if data["sleep_category"] == 0:          ls += 1
-    if data["alcohol_category"] == 2:        ls += 1
-    if data["bmi_category"] >= 3:            ls += 1
-    if data["stress_level"] >= 7:            ls += 1
-    if data["diet_quality_score"] <= 3:      ls += 1
+    if data["smoking_status"] == 2:     ls += 1
+    if data["activity_level"] == 0:     ls += 1
+    if data["sleep_category"] == 0:     ls += 1
+    if data["alcohol_category"] == 2:   ls += 1
+    if data["bmi_category"] >= 3:       ls += 1
+    if data["stress_level"] >= 7:       ls += 1
+    if data["diet_quality_score"] <= 3: ls += 1
     data["lifestyle_risk_score"] = ls
 
-    # clinical_risk_score
     cs = 0
-    if data["hypertension_stage"] >= 2:                    cs += 1
-    if data["cholesterol_category"] >= 2:                  cs += 1
-    if data.get("diabetes", 0) == 1:                       cs += 1
-    if int(data.get("family_history_heart_disease", 0)):   cs += 1
-    if age >= 45:                                          cs += 1
+    if data["hypertension_stage"] >= 2:                  cs += 1
+    if data["cholesterol_category"] >= 2:                cs += 1
+    if data.get("diabetes", 0) == 1:                     cs += 1
+    if int(data.get("family_history_heart_disease", 0)): cs += 1
+    if age >= 45:                                        cs += 1
     data["clinical_risk_score"] = cs
 
-    # Convert bool to int
     data["family_history_heart_disease"] = int(data.get("family_history_heart_disease", 0))
 
     return data
 
 
 class HearthyPredictor:
-    def __init__(self, model_path: str, scaler_path: str, label_encoder_path: str):
+    def __init__(
+        self,
+        model_path: str,
+        scaler_path: str,
+        label_encoder_path: str,
+        recommender: GeminiRecommender,
+    ):
         self.model = tf.keras.models.load_model(
             model_path,
             custom_objects={
@@ -204,11 +198,13 @@ class HearthyPredictor:
         )
         self.scaler        = joblib.load(scaler_path)
         self.label_encoder = joblib.load(label_encoder_path)
+        self.recommender   = recommender
 
     def predict(self, req: PredictionRequest) -> PredictionResponse:
+        from app.schemas.prediction import F1Scores
+
         data = _derive_features(req)
 
-        # Build feature vector sesuai urutan training
         x        = np.array([[data.get(f, 0) for f in FEATURE_ORDER]], dtype=np.float32)
         x_scaled = self.scaler.transform(x)
 
@@ -228,28 +224,27 @@ class HearthyPredictor:
         else:
             risk_score = float(class_idx / 2) * 100
 
-        user_input_dict = {
-            "systolic_bp"                     : data["systolic_bp"],
-            "diastolic_bp"                    : data["diastolic_bp"],
-            "cholesterol_mg_dl"               : data["cholesterol_mg_dl"],
-            "bmi"                             : data["bmi"],
-            "resting_heart_rate"              : data["resting_heart_rate"],
-            "daily_steps"                     : data["daily_steps"],
-            "physical_activity_hours_per_week": data["physical_activity_hours_per_week"],
-            "sleep_hours"                     : data["sleep_hours"],
-            "alcohol_units_per_week"          : data["alcohol_units_per_week"],
-            "stress_level"                    : data["stress_level"],
-            "diet_quality_score"              : data["diet_quality_score"],
-            "family_history_heart_disease"    : bool(data["family_history_heart_disease"]),
+        STATIC_F1 = {
+            "low"       : 0.94,
+            "medium"    : 0.93,
+            "high"      : 0.90,
+            "macro_avg" : 0.92,
         }
+        f1 = F1Scores(**STATIC_F1)
 
-        recommendations  = generate_recommendations(user_input_dict)
-        risk_comparison  = generate_risk_comparison(user_input_dict)
+        patient_data = req.model_dump()
+        patient_data["confidence"] = confidence
+
+        recommendations = self.recommender.recommend(
+            risk_category=risk_category,
+            risk_score=round(risk_score, 1),
+            patient_data=patient_data,
+        )
 
         return PredictionResponse(
             risk_category=risk_category,
             risk_score=round(risk_score, 1),
             confidence=round(confidence, 4),
+            f1_scores=f1,
             recommendations=recommendations,
-            risk_comparison=risk_comparison,
         )
