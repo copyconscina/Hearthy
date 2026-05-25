@@ -12,14 +12,13 @@ def predict(
     predictor: HearthyPredictor = Depends(get_predictor),
 ) -> PredictionResponse:
     """
-    Prediksi risiko kardiovaskular berdasarkan data klinis dan gaya hidup pasien.
+    Prediksi risiko kardiovaskular + rekomendasi aktivitas dari Gemini.
 
     Return:
     - **risk_category**: Low | Medium | High
     - **risk_score**: 0–100
     - **confidence**: probabilitas prediksi (0–1)
-    - **recommendations**: rekomendasi klinis terstruktur
-    - **risk_comparison**: perbandingan parameter vs standar medis
+    - **recommendations**: rekomendasi aktivitas personal dari Gemini AI
     """
     try:
         return predictor.predict(req)
